@@ -74,3 +74,4 @@ async def locate_ip(ip: str):
             return {"error": "IP target resolution failed."}
     except Exception as e:
         return {"error": str(e)}
+
