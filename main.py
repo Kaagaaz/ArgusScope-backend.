@@ -9,6 +9,11 @@ from pydantic import BaseModel
 from typing import List
 
 
+# =========================================================
+# ARGUSSCOPE
+# High-Precision Intelligence Engine
+# =========================================================
+
 app = FastAPI(
     title="ArgusScope High-Precision Intelligence Engine",
     version="2.1.0"
@@ -29,7 +34,7 @@ app.add_middleware(
 
 
 # =========================================================
-# ENVIRONMENT
+# ENVIRONMENT VARIABLES
 # =========================================================
 
 WIGLE_USER = os.getenv("WIGLE_API_USER", "")
@@ -43,10 +48,11 @@ WIGLE_TOKEN = os.getenv("WIGLE_API_KEY", "")
 SEARCH_CACHE = {}
 
 CACHE_TTL_SECONDS = 600
+REQUEST_TIMEOUT = 15
 
 
 # =========================================================
-# MODELS
+# DATA MODELS
 # =========================================================
 
 class ScanTarget(BaseModel):
@@ -63,6 +69,9 @@ class MultiBSSIDRequest(BaseModel):
 # =========================================================
 
 def sanitize_mac(mac: str) -> str:
+    """
+    Normalize a MAC/BSSID into lowercase colon-separated format.
+    """
     return (
         mac
         .strip()
@@ -71,8 +80,10 @@ def sanitize_mac(mac: str) -> str:
     )
 
 
-def valid_ip(ip: str) -> bool:
-
+def is_valid_ip(ip: str) -> bool:
+    """
+    Validate IPv4/IPv6 address.
+    """
     try:
         ipaddress.ip_address(ip)
         return True
@@ -82,7 +93,7 @@ def valid_ip(ip: str) -> bool:
 
 
 # =========================================================
-# ROOT
+# ROOT / HEALTH CHECK
 # =========================================================
 
 @app.get("/")
@@ -103,201 +114,6 @@ def read_root():
 
 
 # =========================================================
-# IP GEOLOCATION
-# =========================================================
-
-@app.get("/api/v1/locate-ip")
-async def locate_ip(ip: str):
-
-    ip = ip.strip()
-
-    # -----------------------------------------
-    # Validate IP
-    # -----------------------------------------
-
-    if not valid_ip(ip):
-
-        return {
-            "error": "Invalid IP address."
-        }
-
-
-    try:
-
-        # -----------------------------------------
-        # Use HTTPS JSON endpoint
-        # -----------------------------------------
-
-        url = f"https://ipwho.is/{ip}"
-
-        response = requests.get(
-            url,
-            timeout=10,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "ArgusScope/2.1"
-            }
-        )
-
-
-        # -----------------------------------------
-        # HTTP failure
-        # -----------------------------------------
-
-        if response.status_code != 200:
-
-            return {
-                "error": (
-                    f"IP geolocation service returned "
-                    f"HTTP {response.status_code}."
-                )
-            }
-
-
-        # -----------------------------------------
-        # Protect against invalid JSON
-        # -----------------------------------------
-
-        try:
-
-            ip_data = response.json()
-
-        except ValueError:
-
-            return {
-                "error": (
-                    "IP geolocation service returned "
-                    "an invalid response."
-                )
-            }
-
-
-        # -----------------------------------------
-        # API-level failure
-        # -----------------------------------------
-
-        if not ip_data.get("success", False):
-
-            return {
-                "error": (
-                    ip_data.get(
-                        "message",
-                        "IP target resolution failed."
-                    )
-                )
-            }
-
-
-        # -----------------------------------------
-        # Extract location
-        # -----------------------------------------
-
-        latitude = ip_data.get("latitude")
-        longitude = ip_data.get("longitude")
-
-
-        if latitude is None or longitude is None:
-
-            return {
-                "error": "No coordinates returned for this IP."
-            }
-
-
-        # -----------------------------------------
-        # Return ArgusScope format
-        # -----------------------------------------
-
-        return {
-
-            "ip": ip_data.get(
-                "ip",
-                ip
-            ),
-
-            "latitude": latitude,
-
-            "longitude": longitude,
-
-            "city": ip_data.get(
-                "city"
-            ),
-
-            "region": ip_data.get(
-                "region"
-            ),
-
-            "country": ip_data.get(
-                "country"
-            ),
-
-            "country_code": ip_data.get(
-                "country_code"
-            ),
-
-            "postal": ip_data.get(
-                "postal"
-            ),
-
-            "timezone": (
-                ip_data.get("timezone", {})
-                .get("id")
-                if isinstance(
-                    ip_data.get("timezone"),
-                    dict
-                )
-                else None
-            ),
-
-            "isp": (
-                ip_data.get("connection", {})
-                .get("isp")
-                if isinstance(
-                    ip_data.get("connection"),
-                    dict
-                )
-                else None
-            ),
-
-            "org": (
-                ip_data.get("connection", {})
-                .get("org")
-                if isinstance(
-                    ip_data.get("connection"),
-                    dict
-                )
-                else None
-            ),
-
-            "confidence": (
-                "Medium "
-                "(Regional ISP Geolocation)"
-            ),
-
-            "accuracy_radius_m": 5000,
-
-            "source": "IPWho.is Geo Lookup"
-        }
-
-
-    except requests.RequestException as e:
-
-        return {
-            "error": (
-                f"IP geolocation request failed: {str(e)}"
-            )
-        }
-
-
-    except Exception as e:
-
-        return {
-            "error": (
-                f"Internal IP lookup failure: {str(e)}"
-            )
-        }
-
-
-# =========================================================
 # BSSID LOOKUP
 # =========================================================
 
@@ -306,79 +122,86 @@ async def locate_bssid(netid: str):
 
     target_mac = sanitize_mac(netid)
 
-
-    # -----------------------------------------
-    # Cache
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # CACHE CHECK
+    # -----------------------------------------------------
 
     now = time.time()
-
 
     if target_mac in SEARCH_CACHE:
 
         cached = SEARCH_CACHE[target_mac]
-
 
         if (
             now - cached["timestamp"]
             < CACHE_TTL_SECONDS
         ):
 
-            res_data = cached["data"].copy()
+            result = cached["data"].copy()
 
-            res_data["source"] = (
+            result["source"] = (
                 "Cache (Optimized Memory)"
             )
 
-            return res_data
+            return result
+
+        del SEARCH_CACHE[target_mac]
 
 
-        else:
+    # -----------------------------------------------------
+    # CHECK WIGLE CREDENTIALS
+    # -----------------------------------------------------
 
-            del SEARCH_CACHE[target_mac]
+    if not WIGLE_USER or not WIGLE_TOKEN:
+
+        return {
+            "error":
+            "WiGLE API credentials not configured "
+            "on server backend."
+        }
 
 
-    # -----------------------------------------
-    # WiGLE
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # WIGLE API
+    # -----------------------------------------------------
 
     url = (
         "https://api.wigle.net/"
         "api/v2/network/search"
     )
 
-
     params = {
 
-        "netid": target_mac,
+        "netid":
+        target_mac,
 
-        "resultsPerPage": 1,
+        "resultsPerPage":
+        1,
 
-        "latrange1": -90.0,
+        "latrange1":
+        -90.0,
 
-        "latrange2": 90.0,
+        "latrange2":
+        90.0,
 
-        "longrange1": -180.0,
+        "longrange1":
+        -180.0,
 
-        "longrange2": 180.0
+        "longrange2":
+        180.0
     }
 
-
     headers = {
-        "Accept": "application/json"
+
+        "Accept":
+        "application/json",
+
+        "User-Agent":
+        "ArgusScope/2.1"
     }
 
 
     try:
-
-        if not WIGLE_USER or not WIGLE_TOKEN:
-
-            return {
-                "error":
-                "WiGLE API credentials not configured "
-                "on server backend."
-            }
-
 
         response = requests.get(
 
@@ -393,9 +216,13 @@ async def locate_bssid(netid: str):
                 WIGLE_TOKEN
             ),
 
-            timeout=15
+            timeout=REQUEST_TIMEOUT
         )
 
+
+        # -------------------------------------------------
+        # RATE LIMIT
+        # -------------------------------------------------
 
         if response.status_code == 429:
 
@@ -405,14 +232,22 @@ async def locate_bssid(netid: str):
             }
 
 
+        # -------------------------------------------------
+        # OTHER HTTP ERRORS
+        # -------------------------------------------------
+
         if response.status_code != 200:
 
             return {
                 "error":
                 f"WiGLE API error: "
-                f"Status code {response.status_code}"
+                f"HTTP {response.status_code}"
             }
 
+
+        # -------------------------------------------------
+        # SAFE JSON PARSING
+        # -------------------------------------------------
 
         try:
 
@@ -422,18 +257,46 @@ async def locate_bssid(netid: str):
 
             return {
                 "error":
-                "WiGLE returned an invalid response."
+                "WiGLE returned an invalid JSON response."
             }
 
+
+        # -------------------------------------------------
+        # RESULTS
+        # -------------------------------------------------
 
         if (
             data.get("success")
             and data.get("results")
-            and len(data["results"]) > 0
         ):
 
             result = data["results"][0]
 
+
+            latitude = result.get(
+                "trilat"
+            )
+
+            longitude = result.get(
+                "trilong"
+            )
+
+
+            if (
+                latitude is None
+                or longitude is None
+            ):
+
+                return {
+                    "error":
+                    "WiGLE returned a result "
+                    "without coordinates."
+                }
+
+
+            # ---------------------------------------------
+            # CONFIDENCE
+            # ---------------------------------------------
 
             obs_count = result.get(
                 "count",
@@ -471,6 +334,10 @@ async def locate_bssid(netid: str):
                 )
 
 
+            # ---------------------------------------------
+            # RESPONSE
+            # ---------------------------------------------
+
             payload = {
 
                 "bssid":
@@ -483,10 +350,10 @@ async def locate_bssid(netid: str):
                 ),
 
                 "latitude":
-                result.get("trilat"),
+                latitude,
 
                 "longitude":
-                result.get("trilong"),
+                longitude,
 
                 "accuracy_radius_m":
                 radius,
@@ -502,6 +369,10 @@ async def locate_bssid(netid: str):
             }
 
 
+            # ---------------------------------------------
+            # SAVE CACHE
+            # ---------------------------------------------
+
             SEARCH_CACHE[target_mac] = {
 
                 "timestamp":
@@ -515,28 +386,29 @@ async def locate_bssid(netid: str):
             return payload
 
 
-        else:
-
-            return {
-                "error":
-                "Target BSSID not cataloged "
-                "in WiGLE database."
-            }
-
-
-    except requests.RequestException as e:
-
         return {
+
             "error":
-            f"WiGLE request failed: {str(e)}"
+            "Target BSSID not cataloged "
+            "in WiGLE database."
         }
 
 
-    except Exception as e:
+    except requests.RequestException as exc:
 
         return {
+
             "error":
-            f"Internal routing failure: {str(e)}"
+            f"WiGLE request failed: {str(exc)}"
+        }
+
+
+    except Exception as exc:
+
+        return {
+
+            "error":
+            f"Internal routing failure: {str(exc)}"
         }
 
 
@@ -549,9 +421,14 @@ async def triangulate_cluster(
     payload: MultiBSSIDRequest
 ):
 
+    # -----------------------------------------------------
+    # CHECK CREDENTIALS
+    # -----------------------------------------------------
+
     if not WIGLE_USER or not WIGLE_TOKEN:
 
         return {
+
             "error":
             "WiGLE API credentials not configured "
             "on server backend."
@@ -565,7 +442,12 @@ async def triangulate_cluster(
 
 
     headers = {
-        "Accept": "application/json"
+
+        "Accept":
+        "application/json",
+
+        "User-Agent":
+        "ArgusScope/2.1"
     }
 
 
@@ -574,10 +456,15 @@ async def triangulate_cluster(
     total_weight = 0
 
 
+    # -----------------------------------------------------
+    # PROCESS EACH BSSID
+    # -----------------------------------------------------
+
     for scan in payload.scans:
 
-        clean_mac =
-            sanitize_mac(scan.netid)
+        clean_mac = sanitize_mac(
+            scan.netid
+        )
 
 
         params = {
@@ -617,13 +504,18 @@ async def triangulate_cluster(
                     WIGLE_TOKEN
                 ),
 
-                timeout=15
+                timeout=REQUEST_TIMEOUT
             )
 
 
             if response.status_code != 200:
+
                 continue
 
+
+            # ---------------------------------------------
+            # SAFE JSON PARSING
+            # ---------------------------------------------
 
             try:
 
@@ -639,21 +531,25 @@ async def triangulate_cluster(
                 and data.get("results")
             ):
 
-                res =
-                    data["results"][0]
+                result = data["results"][0]
 
 
-                lat =
-                    res.get("trilat")
+                latitude = result.get(
+                    "trilat"
+                )
 
-                lon =
-                    res.get("trilong")
+                longitude = result.get(
+                    "trilong"
+                )
 
 
                 if (
-                    lat is not None
-                    and lon is not None
+                    latitude is not None
+                    and longitude is not None
                 ):
+
+                    # Stronger RSSI =
+                    # greater weighting
 
                     weight = max(
                         1,
@@ -664,10 +560,10 @@ async def triangulate_cluster(
                     valid_points.append({
 
                         "lat":
-                        lat,
+                        float(latitude),
 
                         "lon":
-                        lon,
+                        float(longitude),
 
                         "weight":
                         weight
@@ -677,12 +573,24 @@ async def triangulate_cluster(
                     total_weight += weight
 
 
+        except requests.RequestException:
+
+            continue
+
+
         except Exception:
 
             continue
 
 
-    if not valid_points:
+    # -----------------------------------------------------
+    # NO RESULTS
+    # -----------------------------------------------------
+
+    if (
+        not valid_points
+        or total_weight <= 0
+    ):
 
         return {
 
@@ -692,12 +600,19 @@ async def triangulate_cluster(
         }
 
 
+    # -----------------------------------------------------
+    # RSSI-WEIGHTED CENTROID
+    # -----------------------------------------------------
+
     weighted_lat = (
 
         sum(
-            p["lat"] * p["weight"]
-            for p in valid_points
+            point["lat"]
+            * point["weight"]
+
+            for point in valid_points
         )
+
         / total_weight
     )
 
@@ -705,12 +620,19 @@ async def triangulate_cluster(
     weighted_lon = (
 
         sum(
-            p["lon"] * p["weight"]
-            for p in valid_points
+            point["lon"]
+            * point["weight"]
+
+            for point in valid_points
         )
+
         / total_weight
     )
 
+
+    # -----------------------------------------------------
+    # RESPONSE
+    # -----------------------------------------------------
 
     return {
 
@@ -726,13 +648,14 @@ async def triangulate_cluster(
         "accuracy_radius_m":
         max(
             5,
-            30 - (
-                len(valid_points) * 5
+            30 -
+            (
+                len(valid_points)
+                * 5
             )
         ),
 
-        "confidence":
-        (
+        "confidence": (
             "High "
             "(Multi-Point Fusion Across "
             f"{len(valid_points)} Nodes)"
@@ -741,3 +664,276 @@ async def triangulate_cluster(
         "source":
         "WiGLE Cluster Centroid Calculation"
     }
+
+
+# =========================================================
+# IP GEOLOCATION
+# =========================================================
+
+@app.get("/api/v1/locate-ip")
+async def locate_ip(ip: str):
+
+    ip = ip.strip()
+
+
+    # -----------------------------------------------------
+    # VALIDATE IP
+    # -----------------------------------------------------
+
+    if not is_valid_ip(ip):
+
+        return {
+
+            "error":
+            "Invalid IP address."
+        }
+
+
+    try:
+
+        parsed_ip = ipaddress.ip_address(ip)
+
+
+        # -------------------------------------------------
+        # PRIVATE / NON-ROUTABLE IP
+        # -------------------------------------------------
+
+        if (
+
+            parsed_ip.is_private
+            or parsed_ip.is_loopback
+            or parsed_ip.is_link_local
+            or parsed_ip.is_reserved
+            or parsed_ip.is_multicast
+
+        ):
+
+            return {
+
+                "error":
+                "Private or non-routable IP "
+                "addresses cannot be geolocated."
+            }
+
+
+        # -------------------------------------------------
+        # IPWHO.IS
+        # -------------------------------------------------
+
+        url = f"https://ipwho.is/{ip}"
+
+
+        response = requests.get(
+
+            url,
+
+            headers={
+
+                "Accept":
+                "application/json",
+
+                "User-Agent":
+                "ArgusScope/2.1"
+            },
+
+            timeout=REQUEST_TIMEOUT
+        )
+
+
+        # -------------------------------------------------
+        # HTTP ERROR
+        # -------------------------------------------------
+
+        if response.status_code != 200:
+
+            return {
+
+                "error":
+                "IP geolocation service returned "
+                f"HTTP {response.status_code}."
+            }
+
+
+        # -------------------------------------------------
+        # SAFE JSON PARSING
+        # -------------------------------------------------
+
+        try:
+
+            ip_data = response.json()
+
+        except ValueError:
+
+            return {
+
+                "error":
+                "IP geolocation service "
+                "returned invalid JSON."
+            }
+
+
+        # -------------------------------------------------
+        # API FAILURE
+        # -------------------------------------------------
+
+        if not ip_data.get("success"):
+
+            return {
+
+                "error":
+                ip_data.get(
+                    "message",
+                    "IP target resolution failed."
+                )
+            }
+
+
+        # -------------------------------------------------
+        # COORDINATES
+        # -------------------------------------------------
+
+        latitude = ip_data.get(
+            "latitude"
+        )
+
+        longitude = ip_data.get(
+            "longitude"
+        )
+
+
+        if (
+            latitude is None
+            or longitude is None
+        ):
+
+            return {
+
+                "error":
+                "No coordinates returned for this IP."
+            }
+
+
+        # -------------------------------------------------
+        # OPTIONAL DATA
+        # -------------------------------------------------
+
+        timezone = ip_data.get(
+            "timezone"
+        )
+
+        connection = ip_data.get(
+            "connection"
+        )
+
+
+        if not isinstance(
+            timezone,
+            dict
+        ):
+
+            timezone = {}
+
+
+        if not isinstance(
+            connection,
+            dict
+        ):
+
+            connection = {}
+
+
+        # -------------------------------------------------
+        # ARGUSSCOPE RESPONSE
+        # -------------------------------------------------
+
+        return {
+
+            "ip":
+            ip_data.get(
+                "ip",
+                ip
+            ),
+
+            "latitude":
+            latitude,
+
+            "longitude":
+            longitude,
+
+            "city":
+            ip_data.get(
+                "city"
+            ),
+
+            "region":
+            ip_data.get(
+                "region"
+            ),
+
+            "country":
+            ip_data.get(
+                "country"
+            ),
+
+            "country_code":
+            ip_data.get(
+                "country_code"
+            ),
+
+            "postal":
+            ip_data.get(
+                "postal"
+            ),
+
+            "timezone":
+            timezone.get(
+                "id"
+            ),
+
+            "isp":
+            connection.get(
+                "isp"
+            ),
+
+            "org":
+            connection.get(
+                "org"
+            ),
+
+            "confidence":
+            "Medium (Regional ISP Geolocation)",
+
+            "accuracy_radius_m":
+            5000,
+
+            "source":
+            "IPWho.is Geo Lookup"
+        }
+
+
+    # -----------------------------------------------------
+    # NETWORK FAILURE
+    # -----------------------------------------------------
+
+    except requests.RequestException as exc:
+
+        return {
+
+            "error":
+            f"IP geolocation request failed: "
+            f"{str(exc)}"
+        }
+
+
+    # -----------------------------------------------------
+    # INTERNAL FAILURE
+    # -----------------------------------------------------
+
+    except Exception as exc:
+
+        return {
+
+            "error":
+            f"Internal IP lookup failure: "
+            f"{str(exc)}"
+        }
