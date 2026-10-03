@@ -14,7 +14,7 @@ from typing import List
 # INTELLIGENCE ENGINE BACKEND
 # =========================================================
 
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.1.0"
 
 app = FastAPI(
     title="ArgusScope Intelligence Engine",
@@ -43,15 +43,28 @@ app.add_middleware(
 # ENVIRONMENT VARIABLES
 # =========================================================
 
-WIGLE_USER = os.getenv("WIGLE_API_USER", "").strip()
-WIGLE_TOKEN = os.getenv("WIGLE_API_KEY", "").strip()
+WIGLE_USER = os.getenv(
+    "WIGLE_API_USER",
+    ""
+).strip()
 
-# Optional but recommended.
-# Create this in Render Environment as:
+WIGLE_TOKEN = os.getenv(
+    "WIGLE_API_KEY",
+    ""
+).strip()
+
+# Optional ip-api.dev API key.
 #
-# IPAPIIS_API_KEY=your_key
+# Render:
+# IPAPIDEV_API_KEY=your_key
 #
-IPAPIIS_KEY = os.getenv("IPAPIIS_API_KEY", "").strip()
+# The provider can also be used without a key
+# subject to its public limits.
+
+IPAPIDEV_KEY = os.getenv(
+    "IPAPIDEV_API_KEY",
+    ""
+).strip()
 
 
 # =========================================================
@@ -61,6 +74,7 @@ IPAPIIS_KEY = os.getenv("IPAPIIS_API_KEY", "").strip()
 REQUEST_TIMEOUT = 10
 
 IP_CACHE_TTL = 600
+
 BSSID_CACHE_TTL = 600
 
 
@@ -69,6 +83,7 @@ BSSID_CACHE_TTL = 600
 # =========================================================
 
 IP_CACHE = {}
+
 BSSID_CACHE = {}
 
 
@@ -105,7 +120,9 @@ def sanitize_mac(mac: str) -> str:
 
 def normalize_bssid(mac: str) -> str:
     """
-    Convert a MAC/BSSID into AA:BB:CC:DD:EE:FF format.
+    Convert a MAC/BSSID into:
+
+    AA:BB:CC:DD:EE:FF
     """
 
     clean = (
@@ -122,6 +139,7 @@ def normalize_bssid(mac: str) -> str:
 
     try:
         int(clean, 16)
+
     except ValueError:
         return ""
 
@@ -139,6 +157,7 @@ def is_valid_ip(ip: str) -> bool:
 
     try:
         ipaddress.ip_address(ip)
+
         return True
 
     except ValueError:
@@ -147,10 +166,11 @@ def is_valid_ip(ip: str) -> bool:
 
 def is_public_ip(ip: str) -> bool:
     """
-    Check whether an IP is publicly routable.
+    Check whether the IP is publicly routable.
     """
 
     try:
+
         address = ipaddress.ip_address(ip)
 
         return (
@@ -164,6 +184,7 @@ def is_public_ip(ip: str) -> bool:
         )
 
     except ValueError:
+
         return False
 
 
@@ -180,7 +201,12 @@ def cache_get(cache, key, ttl):
     age = time.time() - entry["timestamp"]
 
     if age > ttl:
-        cache.pop(key, None)
+
+        cache.pop(
+            key,
+            None
+        )
+
         return None
 
     return entry["data"]
@@ -199,14 +225,15 @@ def cache_set(cache, key, data):
 
 def safe_json(response):
     """
-    Safely parse JSON without throwing
-    'Expecting value' errors.
+    Safely parse JSON.
     """
 
     try:
+
         return response.json()
 
     except ValueError:
+
         return None
 
 
@@ -218,15 +245,28 @@ def safe_json(response):
 def root():
 
     return {
-        "status": "online",
-        "service": "ArgusScope Intelligence Engine",
-        "version": APP_VERSION,
+
+        "status":
+            "online",
+
+        "service":
+            "ArgusScope Intelligence Engine",
+
+        "version":
+            APP_VERSION,
+
         "endpoints": [
+
             "/health",
+
             "/api/v1/locate-ip",
+
             "/api/v1/locate-bssid",
+
             "/api/v1/triangulate-cluster"
+
         ]
+
     }
 
 
@@ -238,145 +278,222 @@ def root():
 def health():
 
     return {
-        "status": "healthy",
-        "service": "ArgusScope",
-        "version": APP_VERSION,
-        "ip_provider": "ipapi.is",
-        "wigle_configured": bool(
-            WIGLE_USER and WIGLE_TOKEN
-        )
+
+        "status":
+            "healthy",
+
+        "service":
+            "ArgusScope",
+
+        "version":
+            APP_VERSION,
+
+        "ip_providers":
+            "ipapi.co → ip-api.dev → ipwho.is",
+
+        "wigle_configured":
+            bool(
+                WIGLE_USER
+                and WIGLE_TOKEN
+            ),
+
+        "ipapidev_key_configured":
+            bool(IPAPIDEV_KEY)
+
     }
 
 
 # =========================================================
-# IP PROVIDER
-# IPAPI.IS
+# IP PROVIDER 1
+# IPAPI.CO
 # =========================================================
 
-def lookup_ip_ipapi_is(ip: str):
+def lookup_ip_ipapi(ip: str):
     """
     Primary IP geolocation provider.
 
-    ipapi.is supports:
-        city
-        region
-        country
-        latitude
-        longitude
-        timezone
-        ASN
-        company
+    Endpoint:
 
-    An API key is optional, but recommended.
+        https://ipapi.co/{ip}/json/
     """
-
-    params = {
-        "q": ip
-    }
-
-    if IPAPIIS_KEY:
-        params["key"] = IPAPIIS_KEY
 
     try:
 
         response = requests.get(
-            "https://api.ipapi.is/",
-            params=params,
+
+            f"https://ipapi.co/{ip}/json/",
+
             headers={
-                "Accept": "application/json",
-                "User-Agent": "ArgusScope/3.0"
+
+                "Accept":
+                    "application/json",
+
+                "User-Agent":
+                    "ArgusScope/3.1"
+
             },
+
             timeout=REQUEST_TIMEOUT
+
         )
 
     except requests.RequestException as exc:
 
         return {
-            "success": False,
-            "provider": "ipapi.is",
-            "error": str(exc)
+
+            "success":
+                False,
+
+            "provider":
+                "ipapi.co",
+
+            "error":
+                str(exc)
+
         }
 
 
     if response.status_code == 429:
 
         return {
-            "success": False,
-            "provider": "ipapi.is",
-            "rate_limited": True,
-            "error": "IP geolocation provider rate limit reached."
+
+            "success":
+                False,
+
+            "provider":
+                "ipapi.co",
+
+            "rate_limited":
+                True,
+
+            "error":
+                "Provider rate limit reached."
+
         }
 
 
     if response.status_code != 200:
 
         return {
-            "success": False,
-            "provider": "ipapi.is",
+
+            "success":
+                False,
+
+            "provider":
+                "ipapi.co",
+
             "error":
                 f"Provider returned HTTP "
                 f"{response.status_code}."
+
         }
 
 
     data = safe_json(response)
 
+
     if not isinstance(data, dict):
 
         return {
-            "success": False,
-            "provider": "ipapi.is",
-            "error": "Provider returned invalid JSON."
+
+            "success":
+                False,
+
+            "provider":
+                "ipapi.co",
+
+            "error":
+                "Provider returned invalid JSON."
+
         }
 
 
-    # -----------------------------------------------------
-    # BOGON
-    # -----------------------------------------------------
-
-    if data.get("is_bogon") is True:
+    if data.get("error"):
 
         return {
-            "success": False,
-            "provider": "ipapi.is",
-            "error": "The supplied IP is a bogon/reserved address."
+
+            "success":
+                False,
+
+            "provider":
+                "ipapi.co",
+
+            "error":
+                data.get(
+                    "reason",
+                    "Provider could not resolve the IP."
+                )
+
         }
 
 
-    latitude = data.get("lat")
-    longitude = data.get("lon")
+    latitude = data.get(
+        "latitude"
+    )
+
+    longitude = data.get(
+        "longitude"
+    )
 
 
-    if latitude is None or longitude is None:
+    if (
+        latitude is None
+        or longitude is None
+    ):
 
         return {
-            "success": False,
-            "provider": "ipapi.is",
+
+            "success":
+                False,
+
+            "provider":
+                "ipapi.co",
+
             "error":
                 "Provider returned no geographic coordinates."
+
         }
 
 
     try:
 
-        latitude = float(latitude)
-        longitude = float(longitude)
+        latitude = float(
+            latitude
+        )
 
-    except (TypeError, ValueError):
+        longitude = float(
+            longitude
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
 
         return {
-            "success": False,
-            "provider": "ipapi.is",
+
+            "success":
+                False,
+
+            "provider":
+                "ipapi.co",
+
             "error":
                 "Provider returned invalid coordinates."
+
         }
 
 
     return {
-        "success": True,
+
+        "success":
+            True,
 
         "ip":
-            data.get("ip", ip),
+            data.get(
+                "ip",
+                ip
+            ),
 
         "latitude":
             latitude,
@@ -385,150 +502,593 @@ def lookup_ip_ipapi_is(ip: str):
             longitude,
 
         "city":
-            data.get("city"),
+            data.get(
+                "city"
+            ),
 
         "region":
-            data.get("region"),
+            data.get(
+                "region"
+            ),
 
         "country":
-            data.get("country"),
+            data.get(
+                "country_name"
+            ),
 
         "country_code":
-            data.get("country_code"),
+            data.get(
+                "country_code"
+            ),
+
+        "postal":
+            data.get(
+                "postal"
+            ),
 
         "timezone":
-            data.get("timezone"),
+            data.get(
+                "timezone"
+            ),
 
         "isp":
-            data.get("company"),
+            data.get(
+                "org"
+            ),
 
         "org":
-            data.get("company"),
+            data.get(
+                "org"
+            ),
 
         "asn":
-            data.get("asn"),
+            data.get(
+                "asn"
+            ),
 
         "confidence":
             "Approximate IP geolocation",
 
+        "accuracy_radius_m":
+            5000,
+
         "source":
-            "ipapi.is"
+            "ipapi.co"
+
     }
 
 
 # =========================================================
-# FALLBACK PROVIDER
-# IPWHOIS.IO
+# IP PROVIDER 2
+# IP-API.DEV
 # =========================================================
 
-def lookup_ip_ipwhois(ip: str):
+def lookup_ip_ipapidev(ip: str):
     """
-    Secondary fallback provider.
+    Secondary IP geolocation provider.
 
-    Used only when the primary provider fails.
+    Endpoint:
+
+        https://ip-api.dev/api?q={ip}
+
+    An optional API key can be supplied through:
+
+        IPAPIDEV_API_KEY
     """
+
+    headers = {
+
+        "Accept":
+            "application/json",
+
+        "User-Agent":
+            "ArgusScope/3.1"
+
+    }
+
+
+    if IPAPIDEV_KEY:
+
+        headers["X-API-Key"] = (
+            IPAPIDEV_KEY
+        )
+
 
     try:
 
         response = requests.get(
-            f"https://ipwho.is/{ip}",
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "ArgusScope/3.0"
+
+            "https://ip-api.dev/api",
+
+            params={
+                "q": ip
             },
+
+            headers=headers,
+
             timeout=REQUEST_TIMEOUT
+
         )
 
     except requests.RequestException as exc:
 
         return {
-            "success": False,
-            "provider": "ipwho.is",
-            "error": str(exc)
+
+            "success":
+                False,
+
+            "provider":
+                "ip-api.dev",
+
+            "error":
+                str(exc)
+
         }
 
 
     if response.status_code == 429:
 
         return {
-            "success": False,
-            "provider": "ipwho.is",
-            "rate_limited": True,
+
+            "success":
+                False,
+
+            "provider":
+                "ip-api.dev",
+
+            "rate_limited":
+                True,
+
             "error":
-                "Fallback provider rate limit reached."
+                "Provider rate limit reached."
+
+        }
+
+
+    if response.status_code in (
+        401,
+        403
+    ):
+
+        return {
+
+            "success":
+                False,
+
+            "provider":
+                "ip-api.dev",
+
+            "error":
+                "Provider authentication or access restriction."
+
         }
 
 
     if response.status_code != 200:
 
         return {
-            "success": False,
-            "provider": "ipwho.is",
+
+            "success":
+                False,
+
+            "provider":
+                "ip-api.dev",
+
             "error":
                 f"Provider returned HTTP "
                 f"{response.status_code}."
+
         }
 
 
     data = safe_json(response)
 
+
     if not isinstance(data, dict):
 
         return {
-            "success": False,
-            "provider": "ipwho.is",
+
+            "success":
+                False,
+
+            "provider":
+                "ip-api.dev",
+
             "error":
                 "Provider returned invalid JSON."
+
         }
 
 
-    if not data.get("success", False):
+    # -----------------------------------------------------
+    # Try common response formats
+    # -----------------------------------------------------
+
+    latitude = (
+        data.get("latitude")
+        if data.get("latitude") is not None
+        else data.get("lat")
+    )
+
+    longitude = (
+        data.get("longitude")
+        if data.get("longitude") is not None
+        else data.get("lon")
+    )
+
+
+    # Some APIs wrap the actual result.
+
+    nested = data.get(
+        "data"
+    )
+
+    if (
+        isinstance(nested, dict)
+        and (
+            latitude is None
+            or longitude is None
+        )
+    ):
+
+        data = nested
+
+        latitude = (
+            data.get("latitude")
+            if data.get("latitude") is not None
+            else data.get("lat")
+        )
+
+        longitude = (
+            data.get("longitude")
+            if data.get("longitude") is not None
+            else data.get("lon")
+        )
+
+
+    if (
+        latitude is None
+        or longitude is None
+    ):
 
         return {
-            "success": False,
-            "provider": "ipwho.is",
+
+            "success":
+                False,
+
+            "provider":
+                "ip-api.dev",
+
+            "error":
+                "Provider returned no geographic coordinates."
+
+        }
+
+
+    try:
+
+        latitude = float(
+            latitude
+        )
+
+        longitude = float(
+            longitude
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return {
+
+            "success":
+                False,
+
+            "provider":
+                "ip-api.dev",
+
+            "error":
+                "Provider returned invalid coordinates."
+
+        }
+
+
+    return {
+
+        "success":
+            True,
+
+        "ip":
+            data.get(
+                "ip",
+                ip
+            ),
+
+        "latitude":
+            latitude,
+
+        "longitude":
+            longitude,
+
+        "city":
+            data.get(
+                "city"
+            ),
+
+        "region":
+            data.get(
+                "region"
+            ),
+
+        "country":
+            (
+                data.get("country_name")
+                or data.get("country")
+            ),
+
+        "country_code":
+            (
+                data.get("country_code")
+                or data.get("countryCode")
+            ),
+
+        "postal":
+            (
+                data.get("postal")
+                or data.get("zip")
+            ),
+
+        "timezone":
+            data.get(
+                "timezone"
+            ),
+
+        "isp":
+            (
+                data.get("isp")
+                or data.get("org")
+            ),
+
+        "org":
+            data.get(
+                "org"
+            ),
+
+        "asn":
+            data.get(
+                "asn"
+            ),
+
+        "confidence":
+            "Approximate IP geolocation",
+
+        "accuracy_radius_m":
+            5000,
+
+        "source":
+            "ip-api.dev"
+
+    }
+
+
+# =========================================================
+# IP PROVIDER 3
+# IPWHO.IS
+# =========================================================
+
+def lookup_ip_ipwhois(ip: str):
+    """
+    Third IP geolocation fallback.
+
+    Used when the first two providers fail.
+    """
+
+    try:
+
+        response = requests.get(
+
+            f"https://ipwho.is/{ip}",
+
+            headers={
+
+                "Accept":
+                    "application/json",
+
+                "User-Agent":
+                    "ArgusScope/3.1"
+
+            },
+
+            timeout=REQUEST_TIMEOUT
+
+        )
+
+    except requests.RequestException as exc:
+
+        return {
+
+            "success":
+                False,
+
+            "provider":
+                "ipwho.is",
+
+            "error":
+                str(exc)
+
+        }
+
+
+    if response.status_code == 429:
+
+        return {
+
+            "success":
+                False,
+
+            "provider":
+                "ipwho.is",
+
+            "rate_limited":
+                True,
+
+            "error":
+                "Provider rate limit reached."
+
+        }
+
+
+    if response.status_code != 200:
+
+        return {
+
+            "success":
+                False,
+
+            "provider":
+                "ipwho.is",
+
+            "error":
+                f"Provider returned HTTP "
+                f"{response.status_code}."
+
+        }
+
+
+    data = safe_json(response)
+
+
+    if not isinstance(data, dict):
+
+        return {
+
+            "success":
+                False,
+
+            "provider":
+                "ipwho.is",
+
+            "error":
+                "Provider returned invalid JSON."
+
+        }
+
+
+    if not data.get(
+        "success",
+        False
+    ):
+
+        return {
+
+            "success":
+                False,
+
+            "provider":
+                "ipwho.is",
+
             "error":
                 data.get(
                     "message",
                     "Provider could not resolve the IP."
                 )
+
         }
 
 
-    latitude = data.get("latitude")
-    longitude = data.get("longitude")
+    latitude = data.get(
+        "latitude"
+    )
+
+    longitude = data.get(
+        "longitude"
+    )
 
 
-    if latitude is None or longitude is None:
+    if (
+        latitude is None
+        or longitude is None
+    ):
 
         return {
-            "success": False,
-            "provider": "ipwho.is",
+
+            "success":
+                False,
+
+            "provider":
+                "ipwho.is",
+
             "error":
                 "Provider returned no coordinates."
+
         }
 
 
     try:
 
-        latitude = float(latitude)
-        longitude = float(longitude)
+        latitude = float(
+            latitude
+        )
 
-    except (TypeError, ValueError):
+        longitude = float(
+            longitude
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
 
         return {
-            "success": False,
-            "provider": "ipwho.is",
+
+            "success":
+                False,
+
+            "provider":
+                "ipwho.is",
+
             "error":
                 "Provider returned invalid coordinates."
+
         }
 
 
+    timezone = data.get(
+        "timezone"
+    )
+
+    connection = data.get(
+        "connection"
+    )
+
+
+    if not isinstance(
+        timezone,
+        dict
+    ):
+
+        timezone = {}
+
+
+    if not isinstance(
+        connection,
+        dict
+    ):
+
+        connection = {}
+
+
     return {
-        "success": True,
+
+        "success":
+            True,
 
         "ip":
-            data.get("ip", ip),
+            data.get(
+                "ip",
+                ip
+            ),
 
         "latitude":
             latitude,
@@ -537,60 +1097,59 @@ def lookup_ip_ipwhois(ip: str):
             longitude,
 
         "city":
-            data.get("city"),
+            data.get(
+                "city"
+            ),
 
         "region":
-            data.get("region"),
+            data.get(
+                "region"
+            ),
 
         "country":
-            data.get("country"),
+            data.get(
+                "country"
+            ),
 
         "country_code":
-            data.get("country_code"),
+            data.get(
+                "country_code"
+            ),
+
+        "postal":
+            data.get(
+                "postal"
+            ),
 
         "timezone":
-            data.get("timezone", {}).get("id")
-            if isinstance(
-                data.get("timezone"),
-                dict
-            )
-            else None,
+            timezone.get(
+                "id"
+            ),
 
         "isp":
-            (
-                data.get("connection", {}).get("isp")
-                if isinstance(
-                    data.get("connection"),
-                    dict
-                )
-                else None
+            connection.get(
+                "isp"
             ),
 
         "org":
-            (
-                data.get("connection", {}).get("org")
-                if isinstance(
-                    data.get("connection"),
-                    dict
-                )
-                else None
+            connection.get(
+                "org"
             ),
 
         "asn":
-            (
-                data.get("connection", {}).get("asn")
-                if isinstance(
-                    data.get("connection"),
-                    dict
-                )
-                else None
+            connection.get(
+                "asn"
             ),
 
         "confidence":
             "Approximate IP geolocation",
 
+        "accuracy_radius_m":
+            5000,
+
         "source":
             "ipwho.is"
+
     }
 
 
@@ -604,41 +1163,55 @@ def locate_ip(ip: str):
     ip = ip.strip()
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # VALIDATION
-    # -----------------------------------------------------
+    # =====================================================
 
     if not is_valid_ip(ip):
 
         return {
-            "success": False,
-            "error": "Invalid IP address."
+
+            "success":
+                False,
+
+            "error":
+                "Invalid IP address."
+
         }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # PUBLIC IP CHECK
-    # -----------------------------------------------------
+    # =====================================================
 
     if not is_public_ip(ip):
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "Private or non-routable IP addresses "
                 "cannot be geolocated."
+
         }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # CACHE
-    # -----------------------------------------------------
+    # =====================================================
 
     cached = cache_get(
+
         IP_CACHE,
+
         ip,
+
         IP_CACHE_TTL
+
     )
+
 
     if cached:
 
@@ -650,71 +1223,138 @@ def locate_ip(ip: str):
 
 
     # =====================================================
-    # PRIMARY PROVIDER
+    # PROVIDER 1
     # =====================================================
 
-    result = lookup_ip_ipapi_is(ip)
+    primary = lookup_ip_ipapi(
+        ip
+    )
 
 
-    if result.get("success"):
+    if primary.get(
+        "success"
+    ):
 
-        result["cached"] = False
+        primary["cached"] = False
 
         cache_set(
+
             IP_CACHE,
+
             ip,
-            result
+
+            primary
+
         )
 
-        return result
+        return primary
 
 
     # =====================================================
-    # FALLBACK
+    # PROVIDER 2
     # =====================================================
 
-    fallback = lookup_ip_ipwhois(ip)
+    secondary = lookup_ip_ipapidev(
+        ip
+    )
 
 
-    if fallback.get("success"):
+    if secondary.get(
+        "success"
+    ):
+
+        secondary["cached"] = False
+
+        cache_set(
+
+            IP_CACHE,
+
+            ip,
+
+            secondary
+
+        )
+
+        return secondary
+
+
+    # =====================================================
+    # PROVIDER 3
+    # =====================================================
+
+    fallback = lookup_ip_ipwhois(
+        ip
+    )
+
+
+    if fallback.get(
+        "success"
+    ):
 
         fallback["cached"] = False
 
         cache_set(
+
             IP_CACHE,
+
             ip,
+
             fallback
+
         )
 
         return fallback
 
 
     # =====================================================
-    # FAILURE
+    # ALL PROVIDERS FAILED
     # =====================================================
 
     errors = []
 
-    if result.get("error"):
+
+    if primary.get(
+        "error"
+    ):
+
         errors.append(
-            f"ipapi.is: {result['error']}"
+            f"ipapi.co: "
+            f"{primary['error']}"
         )
 
-    if fallback.get("error"):
+
+    if secondary.get(
+        "error"
+    ):
+
         errors.append(
-            f"ipwho.is: {fallback['error']}"
+            f"ip-api.dev: "
+            f"{secondary['error']}"
+        )
+
+
+    if fallback.get(
+        "error"
+    ):
+
+        errors.append(
+            f"ipwho.is: "
+            f"{fallback['error']}"
         )
 
 
     return {
-        "success": False,
+
+        "success":
+            False,
 
         "error":
-            "No IP geolocation provider could resolve "
-            "this address.",
+            "No IP geolocation provider "
+            "could resolve this address.",
 
         "details":
             errors
+
     }
 
 
@@ -725,31 +1365,41 @@ def locate_ip(ip: str):
 @app.get("/api/v1/locate-bssid")
 def locate_bssid(netid: str):
 
-    target_mac = normalize_bssid(netid)
+    target_mac = normalize_bssid(
+        netid
+    )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # VALIDATION
-    # -----------------------------------------------------
+    # =====================================================
 
     if not target_mac:
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "Invalid BSSID format. Expected "
                 "AA:BB:CC:DD:EE:FF."
+
         }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # CACHE
-    # -----------------------------------------------------
+    # =====================================================
 
     cached = cache_get(
+
         BSSID_CACHE,
+
         target_mac,
+
         BSSID_CACHE_TTL
+
     )
 
 
@@ -757,23 +1407,33 @@ def locate_bssid(netid: str):
 
         result = cached.copy()
 
-        result["source"] = "ArgusScope Cache"
+        result["source"] = (
+            "ArgusScope Cache"
+        )
+
         result["cached"] = True
 
         return result
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # CREDENTIAL CHECK
-    # -----------------------------------------------------
+    # =====================================================
 
-    if not WIGLE_USER or not WIGLE_TOKEN:
+    if (
+        not WIGLE_USER
+        or not WIGLE_TOKEN
+    ):
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "WiGLE API credentials are not configured "
                 "on the Render server."
+
         }
 
 
@@ -788,156 +1448,251 @@ def locate_bssid(netid: str):
 
 
     params = {
-        "netid": target_mac,
-        "resultsPerPage": 1,
-        "latrange1": -90,
-        "latrange2": 90,
-        "longrange1": -180,
-        "longrange2": 180
+
+        "netid":
+            target_mac,
+
+        "resultsPerPage":
+            1,
+
+        "latrange1":
+            -90,
+
+        "latrange2":
+            90,
+
+        "longrange1":
+            -180,
+
+        "longrange2":
+            180
+
     }
 
 
     headers = {
-        "Accept": "application/json",
-        "User-Agent": "ArgusScope/3.0"
+
+        "Accept":
+            "application/json",
+
+        "User-Agent":
+            "ArgusScope/3.1"
+
     }
 
 
     try:
 
         response = requests.get(
-            url,
-            params=params,
-            headers=headers,
-            auth=(
-                WIGLE_USER,
-                WIGLE_TOKEN
-            ),
-            timeout=REQUEST_TIMEOUT
-        )
 
+            url,
+
+            params=params,
+
+            headers=headers,
+
+            auth=(
+
+                WIGLE_USER,
+
+                WIGLE_TOKEN
+
+            ),
+
+            timeout=REQUEST_TIMEOUT
+
+        )
 
     except requests.RequestException as exc:
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
-                f"WiGLE request failed: {str(exc)}"
+                f"WiGLE request failed: "
+                f"{str(exc)}"
+
         }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # RATE LIMIT
-    # -----------------------------------------------------
+    # =====================================================
 
     if response.status_code == 429:
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "WiGLE rate limit exceeded. "
                 "Please wait before trying again."
+
         }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # AUTH FAILURE
-    # -----------------------------------------------------
+    # =====================================================
 
-    if response.status_code in (401, 403):
+    if response.status_code in (
+        401,
+        403
+    ):
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "WiGLE authentication failed. "
                 "Check the Render environment variables."
+
         }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # OTHER HTTP ERRORS
-    # -----------------------------------------------------
+    # =====================================================
 
     if response.status_code != 200:
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 f"WiGLE returned HTTP "
                 f"{response.status_code}."
+
         }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # JSON
-    # -----------------------------------------------------
+    # =====================================================
 
-    data = safe_json(response)
+    data = safe_json(
+        response
+    )
 
 
-    if not isinstance(data, dict):
+    if not isinstance(
+        data,
+        dict
+    ):
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "WiGLE returned invalid JSON."
+
         }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # RESULTS
-    # -----------------------------------------------------
+    # =====================================================
 
-    results = data.get("results")
+    results = data.get(
+        "results"
+    )
 
 
-    if not data.get("success") or not results:
+    if not data.get(
+        "success"
+    ) or not results:
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "BSSID not found in the WiGLE database."
+
         }
 
 
     result = results[0]
 
 
-    latitude = result.get("trilat")
-    longitude = result.get("trilong")
+    latitude = result.get(
+        "trilat"
+    )
+
+    longitude = result.get(
+        "trilong"
+    )
 
 
-    if latitude is None or longitude is None:
+    if (
+        latitude is None
+        or longitude is None
+    ):
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "WiGLE returned a result without coordinates."
+
         }
 
 
     try:
 
-        latitude = float(latitude)
-        longitude = float(longitude)
+        latitude = float(
+            latitude
+        )
 
-    except (TypeError, ValueError):
+        longitude = float(
+            longitude
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "WiGLE returned invalid coordinates."
+
         }
 
 
-    observations = result.get("count", 1)
+    observations = result.get(
+        "count",
+        1
+    )
 
 
     try:
 
-        observations = int(observations)
+        observations = int(
+            observations
+        )
 
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError
+    ):
 
         observations = 1
 
@@ -975,7 +1730,8 @@ def locate_bssid(netid: str):
 
     payload = {
 
-        "success": True,
+        "success":
+            True,
 
         "bssid":
             result.get(
@@ -1009,17 +1765,22 @@ def locate_bssid(netid: str):
 
         "cached":
             False
+
     }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # CACHE
-    # -----------------------------------------------------
+    # =====================================================
 
     cache_set(
+
         BSSID_CACHE,
+
         target_mac,
+
         payload
+
     )
 
 
@@ -1035,30 +1796,41 @@ def triangulate_cluster(
     payload: MultiBSSIDRequest
 ):
 
-    # -----------------------------------------------------
+    # =====================================================
     # CREDENTIALS
-    # -----------------------------------------------------
+    # =====================================================
 
-    if not WIGLE_USER or not WIGLE_TOKEN:
+    if (
+        not WIGLE_USER
+        or not WIGLE_TOKEN
+    ):
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "WiGLE API credentials are not configured "
                 "on the Render server."
+
         }
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # EMPTY REQUEST
-    # -----------------------------------------------------
+    # =====================================================
 
     if not payload.scans:
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "No BSSID observations were supplied."
+
         }
 
 
@@ -1069,8 +1841,13 @@ def triangulate_cluster(
 
 
     headers = {
-        "Accept": "application/json",
-        "User-Agent": "ArgusScope/3.0"
+
+        "Accept":
+            "application/json",
+
+        "User-Agent":
+            "ArgusScope/3.1"
+
     }
 
 
@@ -1089,24 +1866,37 @@ def triangulate_cluster(
 
 
         if not clean_mac:
+
             continue
 
 
-        # -------------------------------------------------
+        # =================================================
         # CACHE FIRST
-        # -------------------------------------------------
+        # =================================================
 
         cached = cache_get(
+
             BSSID_CACHE,
+
             clean_mac,
+
             BSSID_CACHE_TTL
+
         )
 
 
-        if cached and cached.get("success"):
+        if (
+            cached
+            and cached.get("success")
+        ):
 
-            latitude = cached.get("latitude")
-            longitude = cached.get("longitude")
+            latitude = cached.get(
+                "latitude"
+            )
+
+            longitude = cached.get(
+                "longitude"
+            )
 
         else:
 
@@ -1129,6 +1919,7 @@ def triangulate_cluster(
 
                 "longrange2":
                     180
+
             }
 
 
@@ -1143,13 +1934,16 @@ def triangulate_cluster(
                     headers=headers,
 
                     auth=(
+
                         WIGLE_USER,
+
                         WIGLE_TOKEN
+
                     ),
 
                     timeout=REQUEST_TIMEOUT
-                )
 
+                )
 
             except requests.RequestException:
 
@@ -1157,25 +1951,37 @@ def triangulate_cluster(
 
 
             if response.status_code != 200:
+
                 continue
 
 
-            data = safe_json(response)
+            data = safe_json(
+                response
+            )
 
 
-            if not isinstance(data, dict):
-                continue
-
-
-            if not (
-                data.get("success")
-                and data.get("results")
+            if not isinstance(
+                data,
+                dict
             ):
 
                 continue
 
 
-            result = data["results"][0]
+            if not (
+
+                data.get("success")
+
+                and data.get("results")
+
+            ):
+
+                continue
+
+
+            result = data[
+                "results"
+            ][0]
 
 
             latitude = result.get(
@@ -1195,29 +2001,110 @@ def triangulate_cluster(
                 continue
 
 
-        # -------------------------------------------------
+            # Store successful BSSID
+            # result in cache.
+
+            observations = result.get(
+                "count",
+                1
+            )
+
+
+            try:
+
+                observations = int(
+                    observations
+                )
+
+            except (
+                TypeError,
+                ValueError
+            ):
+
+                observations = 1
+
+
+            cached_payload = {
+
+                "success":
+                    True,
+
+                "bssid":
+                    result.get(
+                        "netid",
+                        clean_mac
+                    ),
+
+                "ssid":
+                    result.get(
+                        "ssid",
+                        "Unknown Network"
+                    ),
+
+                "latitude":
+                    float(latitude),
+
+                "longitude":
+                    float(longitude),
+
+                "observations":
+                    observations,
+
+                "source":
+                    "WiGLE",
+
+                "cached":
+                    False
+
+            }
+
+
+            cache_set(
+
+                BSSID_CACHE,
+
+                clean_mac,
+
+                cached_payload
+
+            )
+
+
+        # =================================================
         # VALIDATE COORDINATES
-        # -------------------------------------------------
+        # =================================================
 
         try:
 
-            latitude = float(latitude)
-            longitude = float(longitude)
+            latitude = float(
+                latitude
+            )
 
-        except (TypeError, ValueError):
+            longitude = float(
+                longitude
+            )
+
+        except (
+            TypeError,
+            ValueError
+        ):
 
             continue
 
 
-        # -------------------------------------------------
+        # =================================================
         # RSSI WEIGHT
-        # -------------------------------------------------
+        # =================================================
 
         rssi = scan.rssi
 
+
         weight = max(
+
             1,
+
             100 - abs(rssi)
+
         )
 
 
@@ -1231,6 +2118,7 @@ def triangulate_cluster(
 
             "weight":
                 weight
+
         })
 
 
@@ -1241,10 +2129,14 @@ def triangulate_cluster(
     if not valid_points:
 
         return {
-            "success": False,
+
+            "success":
+                False,
+
             "error":
                 "No valid coordinates could be resolved "
                 "from the supplied BSSID cluster."
+
         }
 
 
@@ -1253,34 +2145,43 @@ def triangulate_cluster(
     # =====================================================
 
     total_weight = sum(
+
         point["weight"]
+
         for point in valid_points
+
     )
 
 
     latitude = (
 
         sum(
+
             point["latitude"]
             * point["weight"]
 
             for point in valid_points
+
         )
 
         / total_weight
+
     )
 
 
     longitude = (
 
         sum(
+
             point["longitude"]
             * point["weight"]
 
             for point in valid_points
+
         )
 
         / total_weight
+
     )
 
 
@@ -1288,7 +2189,9 @@ def triangulate_cluster(
     # CONFIDENCE
     # =====================================================
 
-    count = len(valid_points)
+    count = len(
+        valid_points
+    )
 
 
     if count >= 5:
@@ -1330,7 +2233,8 @@ def triangulate_cluster(
 
     return {
 
-        "success": True,
+        "success":
+            True,
 
         "cluster_size":
             count,
@@ -1349,6 +2253,7 @@ def triangulate_cluster(
 
         "source":
             "ArgusScope WiGLE Cluster Fusion"
+
     }
 
 
@@ -1376,8 +2281,13 @@ def startup_event():
     )
 
     print(
-        f"IPAPIIS key configured: "
-        f"{bool(IPAPIIS_KEY)}"
+        "IP providers: "
+        "ipapi.co -> ip-api.dev -> ipwho.is"
+    )
+
+    print(
+        f"ip-api.dev key configured: "
+        f"{bool(IPAPIDEV_KEY)}"
     )
 
     print(
