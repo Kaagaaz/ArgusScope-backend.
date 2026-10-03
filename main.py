@@ -1,6 +1,5 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import httpx
 import socket
 import os
@@ -15,27 +14,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Set these in your Render Environment Variables
-WIGLE_API_NAME = os.getenv("WIGLE_API_NAME", "YOUR_WIGLE_AID")
-WIGLE_API_SECRET = os.getenv("WIGLE_API_SECRET", "YOUR_WIGLE_SECRET")
+WIGLE_API_NAME = os.getenv("WIGLE_API_NAME", "AID6e5791df2387dceeda23c5bcfaf11417")
+WIGLE_API_SECRET = os.getenv("WIGLE_API_SECRET", "461432f3d06b1726fdfb6298b0a0c60a")
 
 @app.get("/")
 def read_root():
-    return {"status": "ArgusScope WiGLE Engine Active"}
+    return {"status": "ArgusScope WiGLE Engine Online"}
 
-# 1. WiGLE Wi-Fi BSSID Precision Lookup
 @app.get("/api/v1/locate-bssid")
 async def locate_bssid(netid: str):
     """
-    Look up a Wi-Fi MAC Address (BSSID) via WiGLE.
-    Format expected: XX:XX:XX:XX:XX:XX or XX-XX-XX-XX-XX-XX
+    Looks up Wi-Fi BSSID (MAC address) via WiGLE.
+    Accepts formats: 00:11:22:33:44:55 or 00-11-22-33-44-55
     """
     clean_bssid = netid.strip().upper()
     url = f"https://api.wigle.net/api/v2/network/search?netid={clean_bssid}"
     
     auth = (WIGLE_API_NAME, WIGLE_API_SECRET)
     
-    async with httpx.AsyncClient(timeout=6.0) as client:
+    async with httpx.AsyncClient(timeout=8.0) as client:
         try:
             res = await client.get(url, auth=auth)
             data = res.json()
@@ -45,19 +42,18 @@ async def locate_bssid(netid: str):
                 return {
                     "source": "WiGLE Global Wi-Fi Registry",
                     "bssid": clean_bssid,
-                    "ssid": net_info.get("ssid", "Hidden/Unknown"),
-                    "latitude": round(net_info["trilat"], 5),
-                    "longitude": round(net_info["trilong"], 5),
+                    "ssid": net_info.get("ssid") or "Hidden / Unnamed Network",
+                    "latitude": round(float(net_info["trilat"]), 5),
+                    "longitude": round(float(net_info["trilong"]), 5),
                     "accuracy_radius_m": 25,
-                    "confidence": "HIGH (Wi-Fi Physical Triangulation)",
-                    "last_seen": net_info.get("lastupdt")
+                    "confidence": "HIGH (Physical Wi-Fi Triangulation)",
+                    "last_updated": net_info.get("lastupdt")
                 }
             else:
                 return {"error": "BSSID not found in WiGLE database"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-# 2. Multi-Source IP Fallback Endpoint
 @app.get("/api/v1/locate-ip")
 async def locate_ip(ip: str):
     target_ip = ip.strip()
@@ -78,7 +74,7 @@ async def locate_ip(ip: str):
                     "city": d.get("city", "Unknown"),
                     "country": d.get("country", "Unknown"),
                     "org": d.get("org", "Unknown ISP"),
-                    "confidence": "REGIONAL (ISP Routing Gateway)"
+                    "confidence": "REGIONAL (ISP Gateway)"
                 }
         except Exception: pass
             
