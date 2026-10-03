@@ -22,11 +22,15 @@ def read_root():
 
 @app.get("/api/v1/locate-bssid")
 async def locate_bssid(netid: str):
-    url = "https://api.wigle.net/api/v2/network/detail"
+    url = "https://api.wigle.net/api/v2/network/search"
     params = {"netid": netid.strip()}
     headers = {"Accept": "application/json"}
     
     try:
+        # Check if credentials are provided
+        if not WIGLE_USER or not WIGLE_TOKEN:
+            return {"error": "WiGLE API credentials not configured on server backend."}
+            
         response = requests.get(url, params=params, headers=headers, auth=(WIGLE_USER, WIGLE_TOKEN))
         
         print("WiGLE Code:", response.status_code)
@@ -37,8 +41,8 @@ async def locate_bssid(netid: str):
             
         data = response.json()
         
-        if data.get("success") and data.get("result"):
-            result = data["result"]
+        if data.get("success") and data.get("results") and len(data["results"]) > 0:
+            result = data["results"][0]
             return {
                 "bssid": result.get("netid"),
                 "ssid": result.get("ssid", "Unknown SSID"),
