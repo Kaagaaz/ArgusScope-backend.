@@ -14,7 +14,7 @@ from typing import List
 # INTELLIGENCE ENGINE BACKEND
 # =========================================================
 
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.3.0"
 
 app = FastAPI(
     title="ArgusScope Intelligence Engine",
@@ -128,7 +128,6 @@ def is_public_ip(ip):
         )
 
     except ValueError:
-
         return False
 
 
@@ -187,6 +186,23 @@ def cache_set(cache, key, data):
     }
 
 
+def get_nested(data, *keys):
+
+    current = data
+
+    for key in keys:
+
+        if not isinstance(
+            current,
+            dict
+        ):
+            return None
+
+        current = current.get(key)
+
+    return current
+
+
 # =========================================================
 # ROOT
 # =========================================================
@@ -196,7 +212,8 @@ def root():
 
     return {
 
-        "status": "online",
+        "status":
+            "online",
 
         "service":
             "ArgusScope Intelligence Engine",
@@ -237,27 +254,50 @@ def health():
         "version":
             APP_VERSION,
 
-        "ip_providers":
-            "ip-api.dev → ipapi.co → ipwho.is",
+        "primary_ip_provider":
+            "ip-api.dev",
+
+        "fallback_ip_providers":
+            "ipapi.co → ipwho.is",
+
+        "ipapidev_key_configured":
+            bool(IPAPIDEV_KEY),
 
         "wigle_configured":
             bool(
                 WIGLE_USER
                 and WIGLE_TOKEN
-            ),
-
-        "ipapidev_key_configured":
-            bool(IPAPIDEV_KEY)
+            )
 
     }
 
 
 # =========================================================
-# IP PROVIDER 1
+# IP PROVIDER
 # IP-API.DEV
 # =========================================================
 
 def lookup_ip_ipapidev(ip):
+
+    params = {
+
+        "q":
+            ip,
+
+        "format":
+            "json"
+
+    }
+
+
+    # -----------------------------------------------------
+    # API KEY
+    # -----------------------------------------------------
+
+    if IPAPIDEV_KEY:
+
+        params["key"] = IPAPIDEV_KEY
+
 
     headers = {
 
@@ -265,13 +305,9 @@ def lookup_ip_ipapidev(ip):
             "application/json",
 
         "User-Agent":
-            "ArgusScope/3.2"
+            "ArgusScope/3.3"
 
     }
-
-    if IPAPIDEV_KEY:
-
-        headers["X-API-Key"] = IPAPIDEV_KEY
 
 
     try:
@@ -280,9 +316,7 @@ def lookup_ip_ipapidev(ip):
 
             "https://ip-api.dev/api",
 
-            params={
-                "q": ip
-            },
+            params=params,
 
             headers=headers,
 
@@ -306,6 +340,10 @@ def lookup_ip_ipapidev(ip):
         }
 
 
+    # =====================================================
+    # RATE LIMIT
+    # =====================================================
+
     if response.status_code == 429:
 
         return {
@@ -322,7 +360,14 @@ def lookup_ip_ipapidev(ip):
         }
 
 
-    if response.status_code in (401, 403):
+    # =====================================================
+    # AUTH
+    # =====================================================
+
+    if response.status_code in (
+        401,
+        403
+    ):
 
         return {
 
@@ -333,12 +378,32 @@ def lookup_ip_ipapidev(ip):
                 "ip-api.dev",
 
             "error":
-                "Provider authentication or access restriction."
+                "Provider authentication failed."
 
         }
 
 
+    # =====================================================
+    # OTHER HTTP ERROR
+    # =====================================================
+
     if response.status_code != 200:
+
+        data = safe_json(
+            response
+        )
+
+        provider_error = None
+
+        if isinstance(
+            data,
+            dict
+        ):
+
+            provider_error = data.get(
+                "error"
+            )
+
 
         return {
 
@@ -349,16 +414,27 @@ def lookup_ip_ipapidev(ip):
                 "ip-api.dev",
 
             "error":
+                provider_error
+                or
                 f"Provider returned HTTP "
                 f"{response.status_code}."
 
         }
 
 
-    data = safe_json(response)
+    # =====================================================
+    # JSON
+    # =====================================================
+
+    data = safe_json(
+        response
+    )
 
 
-    if not isinstance(data, dict):
+    if not isinstance(
+        data,
+        dict
+    ):
 
         return {
 
@@ -374,9 +450,33 @@ def lookup_ip_ipapidev(ip):
         }
 
 
-    # -----------------------------------------------------
-    # LOCATION OBJECT
-    # -----------------------------------------------------
+    # =====================================================
+    # PROVIDER ERROR
+    # =====================================================
+
+    if data.get(
+        "error"
+    ):
+
+        return {
+
+            "success":
+                False,
+
+            "provider":
+                "ip-api.dev",
+
+            "error":
+                data.get(
+                    "error"
+                )
+
+        }
+
+
+    # =====================================================
+    # NESTED OBJECTS
+    # =====================================================
 
     location = data.get(
         "location"
@@ -390,6 +490,58 @@ def lookup_ip_ipapidev(ip):
         location = {}
 
 
+    asn_data = data.get(
+        "asn"
+    )
+
+    if not isinstance(
+        asn_data,
+        dict
+    ):
+
+        asn_data = {}
+
+
+    network = data.get(
+        "network"
+    )
+
+    if not isinstance(
+        network,
+        dict
+    ):
+
+        network = {}
+
+
+    organization = data.get(
+        "organization"
+    )
+
+    if not isinstance(
+        organization,
+        dict
+    ):
+
+        organization = {}
+
+
+    datacenter = data.get(
+        "datacenter"
+    )
+
+    if not isinstance(
+        datacenter,
+        dict
+    ):
+
+        datacenter = {}
+
+
+    # =====================================================
+    # COORDINATES
+    # =====================================================
+
     latitude = location.get(
         "latitude"
     )
@@ -400,7 +552,7 @@ def lookup_ip_ipapidev(ip):
 
 
     # -----------------------------------------------------
-    # FALLBACK FOR ALTERNATIVE RESPONSE FORMATS
+    # Compatibility fallback
     # -----------------------------------------------------
 
     if latitude is None:
@@ -477,68 +629,128 @@ def lookup_ip_ipapidev(ip):
         }
 
 
-    # -----------------------------------------------------
-    # ORGANIZATION
-    # -----------------------------------------------------
-
-    organization = data.get(
-        "organization"
-    )
-
-    if isinstance(
-        organization,
-        dict
-    ):
-
-        organization_name = (
-            organization.get("name")
-        )
-
-    else:
-
-        organization_name = (
-            organization
-        )
-
-
-    # -----------------------------------------------------
+    # =====================================================
     # ASN
-    # -----------------------------------------------------
+    # =====================================================
 
-    asn_data = data.get(
-        "asn"
+    asn_number = asn_data.get(
+        "number"
     )
 
-    if isinstance(
-        asn_data,
-        dict
-    ):
+    asn_name = asn_data.get(
+        "name"
+    )
 
-        asn_number = (
-            asn_data.get("number")
+    asn_domain = asn_data.get(
+        "domain"
+    )
+
+    asn_country = asn_data.get(
+        "country_code"
+    )
+
+    asn_route = asn_data.get(
+        "route"
+    )
+
+    asn_rir = asn_data.get(
+        "rir"
+    )
+
+    asn_type = asn_data.get(
+        "type"
+    )
+
+
+    asn = None
+
+    if asn_number is not None:
+
+        asn_string = str(
+            asn_number
         )
 
-        asn_name = (
-            asn_data.get("name")
-        )
+        if asn_string.upper().startswith(
+            "AS"
+        ):
 
-    else:
+            asn = asn_string
 
-        asn_number = asn_data
-        asn_name = None
+        else:
+
+            asn = (
+                f"AS{asn_string}"
+            )
 
 
-    if asn_number:
+    # =====================================================
+    # LOCATION
+    # =====================================================
 
-        asn = (
-            str(asn_number)
-            if str(asn_number).upper().startswith("AS")
-            else f"AS{asn_number}"
-        )
+    country = location.get(
+        "country"
+    )
 
-    else:
+    country_code = location.get(
+        "country_code"
+    )
 
-        asn = None
+    region = location.get(
+        "state"
+    )
+
+    city = location.get(
+        "city"
+    )
+
+    postal = location.get(
+        "zip"
+    )
+
+    timezone = location.get(
+        "timezone"
+    )
+
+    precision = location.get(
+        "precision"
+    )
+
+    basis = location.get(
+        "basis"
+    )
+
+    continent = location.get(
+        "continent"
+    )
+
+    continent_code = location.get(
+        "continent_code"
+    )
+
+    local_time = location.get(
+        "local_time"
+    )
+
+    calling_code = location.get(
+        "calling_code"
+    )
+
+    currency_code = location.get(
+        "currency_code"
+    )
+
+
+    # =====================================================
+    # ORGANIZATION
+    # =====================================================
+
+    organization_name = organization.get(
+        "name"
+    )
+
+    organization_domain = organization.get(
+        "domain"
+    )
 
 
     if not organization_name:
@@ -546,72 +758,243 @@ def lookup_ip_ipapidev(ip):
         organization_name = asn_name
 
 
-    # -----------------------------------------------------
-    # COUNTRY
-    # -----------------------------------------------------
+    # =====================================================
+    # NETWORK
+    # =====================================================
 
-    country = (
-        location.get("country_name")
-        or location.get("country")
-        or data.get("country_name")
-        or data.get("country")
+    network_cidr = network.get(
+        "cidr"
+    )
+
+    network_name = network.get(
+        "name"
+    )
+
+    network_type = network.get(
+        "type"
+    )
+
+    network_rir = network.get(
+        "rir"
+    )
+
+    network_country = network.get(
+        "country_code"
+    )
+
+    network_rdap = network.get(
+        "rdap_url"
     )
 
 
-    country_code = (
-        location.get("country_code")
-        or location.get("countryCode")
-        or data.get("country_code")
-        or data.get("countryCode")
+    # =====================================================
+    # DATACENTER
+    # =====================================================
+
+    datacenter_provider = datacenter.get(
+        "provider"
+    )
+
+    datacenter_domain = datacenter.get(
+        "domain"
+    )
+
+    datacenter_network = datacenter.get(
+        "network"
+    )
+
+    datacenter_country = datacenter.get(
+        "country_code"
+    )
+
+    datacenter_region = datacenter.get(
+        "region"
     )
 
 
-    # -----------------------------------------------------
-    # REGION
-    # -----------------------------------------------------
+    # =====================================================
+    # SERVICES
+    # =====================================================
 
-    region = (
-        location.get("state")
-        or location.get("region")
-        or data.get("region")
+    services = data.get(
+        "services"
+    )
+
+    if not isinstance(
+        services,
+        list
+    ):
+
+        services = []
+
+
+    # =====================================================
+    # NETWORK FLAGS
+    # =====================================================
+
+    is_bogon = bool(
+        data.get(
+            "is_bogon",
+            False
+        )
+    )
+
+    is_datacenter = bool(
+        data.get(
+            "is_datacenter",
+            False
+        )
+    )
+
+    is_anycast = bool(
+        data.get(
+            "is_anycast",
+            False
+        )
+    )
+
+    is_tor = bool(
+        data.get(
+            "is_tor",
+            False
+        )
+    )
+
+    is_proxy = bool(
+        data.get(
+            "is_proxy",
+            False
+        )
+    )
+
+    is_vpn = bool(
+        data.get(
+            "is_vpn",
+            False
+        )
+    )
+
+    is_abuser = bool(
+        data.get(
+            "is_abuser",
+            False
+        )
+    )
+
+    is_mobile = bool(
+        data.get(
+            "is_mobile",
+            False
+        )
+    )
+
+    is_satellite = bool(
+        data.get(
+            "is_satellite",
+            False
+        )
+    )
+
+    is_crawler = bool(
+        data.get(
+            "is_crawler",
+            False
+        )
     )
 
 
-    # -----------------------------------------------------
-    # CITY
-    # -----------------------------------------------------
+    # =====================================================
+    # CRAWLER
+    # =====================================================
 
-    city = (
-        location.get("city")
-        or data.get("city")
+    crawler = data.get(
+        "crawler"
+    )
+
+    if not isinstance(
+        crawler,
+        dict
+    ):
+
+        crawler = {}
+
+
+    crawler_name = crawler.get(
+        "name"
     )
 
 
-    # -----------------------------------------------------
-    # POSTAL
-    # -----------------------------------------------------
+    # =====================================================
+    # HOSTNAME
+    # =====================================================
 
-    postal = (
-        location.get("zip")
-        or location.get("postal")
-        or data.get("zip")
-        or data.get("postal")
+    hostname = data.get(
+        "hostname"
     )
 
 
-    # -----------------------------------------------------
-    # TIMEZONE
-    # -----------------------------------------------------
+    # =====================================================
+    # CONFIDENCE
+    # =====================================================
 
-    timezone = (
-        location.get("timezone")
-        or data.get("timezone")
-    )
+    if precision == "street":
+
+        confidence = (
+            "Higher precision "
+            "(Operator geofeed)"
+        )
+
+    elif precision == "city":
+
+        confidence = (
+            "City-level "
+            "(Operator geofeed)"
+        )
+
+    elif precision == "region":
+
+        confidence = (
+            "Regional "
+            "(Operator geofeed/registry)"
+        )
+
+    elif precision == "country":
+
+        confidence = (
+            "Country-level "
+            "(Registry allocation)"
+        )
+
+    elif country_code:
+
+        confidence = (
+            "Approximate IP geolocation"
+        )
+
+    else:
+
+        confidence = (
+            "Unknown geolocation precision"
+        )
 
 
-    # -----------------------------------------------------
-    # RESPONSE
-    # -----------------------------------------------------
+    # =====================================================
+    # ACCURACY
+    # =====================================================
+
+    # IMPORTANT:
+    #
+    # We do NOT invent a radius.
+    #
+    # ip-api.dev supplies semantic precision
+    # such as country/region/city/street.
+    #
+    accuracy_radius_m = None
+
+
+    # =====================================================
+    # FINAL RESPONSE
+    # =====================================================
 
     return {
 
@@ -623,6 +1006,13 @@ def lookup_ip_ipapidev(ip):
                 "ip",
                 ip
             ),
+
+        "hostname":
+            hostname,
+
+        # -------------------------------
+        # LOCATION
+        # -------------------------------
 
         "latitude":
             latitude,
@@ -648,29 +1038,177 @@ def lookup_ip_ipapidev(ip):
         "timezone":
             timezone,
 
+        "continent":
+            continent,
+
+        "continent_code":
+            continent_code,
+
+        "local_time":
+            local_time,
+
+        "calling_code":
+            calling_code,
+
+        "currency_code":
+            currency_code,
+
+        "precision":
+            precision,
+
+        "location_basis":
+            basis,
+
+        # -------------------------------
+        # NETWORK
+        # -------------------------------
+
         "isp":
             organization_name,
 
         "org":
             organization_name,
 
+        "organization":
+            organization_name,
+
+        "organization_domain":
+            organization_domain,
+
         "asn":
             asn,
 
+        "asn_number":
+            asn_number,
+
+        "asn_name":
+            asn_name,
+
+        "asn_domain":
+            asn_domain,
+
+        "asn_country_code":
+            asn_country,
+
+        "asn_route":
+            asn_route,
+
+        "asn_rir":
+            asn_rir,
+
+        "asn_type":
+            asn_type,
+
+        # -------------------------------
+        # REGISTERED NETWORK
+        # -------------------------------
+
+        "network_cidr":
+            network_cidr,
+
+        "network_name":
+            network_name,
+
+        "network_type":
+            network_type,
+
+        "network_rir":
+            network_rir,
+
+        "network_country_code":
+            network_country,
+
+        "network_rdap_url":
+            network_rdap,
+
+        # -------------------------------
+        # DATACENTER
+        # -------------------------------
+
+        "is_datacenter":
+            is_datacenter,
+
+        "datacenter_provider":
+            datacenter_provider,
+
+        "datacenter_domain":
+            datacenter_domain,
+
+        "datacenter_network":
+            datacenter_network,
+
+        "datacenter_country_code":
+            datacenter_country,
+
+        "datacenter_region":
+            datacenter_region,
+
+        # -------------------------------
+        # THREAT / RELAY FLAGS
+        # -------------------------------
+
+        "is_bogon":
+            is_bogon,
+
+        "is_anycast":
+            is_anycast,
+
+        "is_tor":
+            is_tor,
+
+        "is_proxy":
+            is_proxy,
+
+        "is_vpn":
+            is_vpn,
+
+        "is_abuser":
+            is_abuser,
+
+        "is_mobile":
+            is_mobile,
+
+        "is_satellite":
+            is_satellite,
+
+        "is_crawler":
+            is_crawler,
+
+        "crawler_name":
+            crawler_name,
+
+        # -------------------------------
+        # SERVICES
+        # -------------------------------
+
+        "services":
+            services,
+
+        # -------------------------------
+        # QUALITY
+        # -------------------------------
+
         "confidence":
-            "Approximate IP geolocation",
+            confidence,
 
         "accuracy_radius_m":
-            None,
+            accuracy_radius_m,
+
+        # -------------------------------
+        # SOURCE
+        # -------------------------------
 
         "source":
-            "ip-api.dev"
+            "ip-api.dev",
+
+        "cached":
+            False
 
     }
 
 
 # =========================================================
-# IP PROVIDER 2
+# FALLBACK PROVIDER
 # IPAPI.CO
 # =========================================================
 
@@ -688,7 +1226,7 @@ def lookup_ip_ipapi(ip):
                     "application/json",
 
                 "User-Agent":
-                    "ArgusScope/3.2"
+                    "ArgusScope/3.3"
 
             },
 
@@ -769,7 +1307,9 @@ def lookup_ip_ipapi(ip):
         }
 
 
-    if data.get("error"):
+    if data.get(
+        "error"
+    ):
 
         return {
 
@@ -911,16 +1451,19 @@ def lookup_ip_ipapi(ip):
             "Approximate IP geolocation",
 
         "accuracy_radius_m":
-            5000,
+            None,
 
         "source":
-            "ipapi.co"
+            "ipapi.co",
+
+        "cached":
+            False
 
     }
 
 
 # =========================================================
-# IP PROVIDER 3
+# FALLBACK PROVIDER
 # IPWHO.IS
 # =========================================================
 
@@ -938,7 +1481,7 @@ def lookup_ip_ipwhois(ip):
                     "application/json",
 
                 "User-Agent":
-                    "ArgusScope/3.2"
+                    "ArgusScope/3.3"
 
             },
 
@@ -1189,10 +1732,13 @@ def lookup_ip_ipwhois(ip):
             "Approximate IP geolocation",
 
         "accuracy_radius_m":
-            5000,
+            None,
 
         "source":
-            "ipwho.is"
+            "ipwho.is",
+
+        "cached":
+            False
 
     }
 
@@ -1279,8 +1825,6 @@ def locate_ip(ip: str):
         "success"
     ):
 
-        provider_1["cached"] = False
-
         cache_set(
 
             IP_CACHE,
@@ -1306,8 +1850,6 @@ def locate_ip(ip: str):
     if provider_2.get(
         "success"
     ):
-
-        provider_2["cached"] = False
 
         cache_set(
 
@@ -1335,8 +1877,6 @@ def locate_ip(ip: str):
         "success"
     ):
 
-        provider_3["cached"] = False
-
         cache_set(
 
             IP_CACHE,
@@ -1363,18 +1903,11 @@ def locate_ip(ip: str):
         provider_3
     ):
 
-        name = provider.get(
-            "provider",
-            "unknown"
-        )
-
-        error = provider.get(
-            "error",
-            "Unknown provider error."
-        )
-
         details.append(
-            f"{name}: {error}"
+
+            f"{provider.get('provider', 'unknown')}: "
+            f"{provider.get('error', 'Unknown provider error.')}"
+
         )
 
 
@@ -1469,7 +2002,7 @@ def locate_bssid(netid: str):
 
 
     # =====================================================
-    # WIGLE
+    # WIGLE REQUEST
     # =====================================================
 
     url = (
@@ -1507,7 +2040,7 @@ def locate_bssid(netid: str):
             "application/json",
 
         "User-Agent":
-            "ArgusScope/3.2"
+            "ArgusScope/3.3"
 
     }
 
@@ -1845,7 +2378,7 @@ def triangulate_cluster(
             "application/json",
 
         "User-Agent":
-            "ArgusScope/3.2"
+            "ArgusScope/3.3"
 
     }
 
@@ -2280,19 +2813,15 @@ def startup_event():
     )
 
     print(
-        "IP providers:"
+        "Primary IP provider: ip-api.dev"
     )
 
     print(
-        "  1. ip-api.dev"
+        "Fallback provider: ipapi.co"
     )
 
     print(
-        "  2. ipapi.co"
-    )
-
-    print(
-        "  3. ipwho.is"
+        "Fallback provider: ipwho.is"
     )
 
     print(
