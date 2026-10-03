@@ -22,8 +22,7 @@ def read_root():
 
 @app.get("/api/v1/locate-bssid")
 async def locate_bssid(netid: str):
-    # Use the official network detail endpoint for precise single-BSSID lookups
-    url = f"https://api.wigle.net/api/v2/network/detail"
+    url = "https://api.wigle.net/api/v2/network/detail"
     params = {"netid": netid.strip()}
     headers = {"Accept": "application/json"}
     
