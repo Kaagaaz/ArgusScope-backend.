@@ -3,20 +3,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ExifTags
 import httpx
 import io
+import socket
 
 app = FastAPI(title="ArgusScope API")
 
-# Enable CORS so your GitHub Pages site can talk to this backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows requests from any origin (e.g. your GitHub Pages site)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 def convert_to_decimal_degrees(value, ref):
-    """Converts EXIF degrees/minutes/seconds tuples to decimal degrees."""
     if not value:
         return None
     try:
@@ -36,7 +35,6 @@ def read_root():
 
 @app.post("/api/v1/extract-exif")
 async def extract_exif(file: UploadFile = File(...)):
-    """Extracts GPS coordinates and metadata from an uploaded image."""
     try:
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes))
@@ -74,21 +72,46 @@ async def extract_exif(file: UploadFile = File(...)):
 
 @app.get("/api/v1/locate-ip")
 async def locate_ip(ip: str):
-    """Fetches geolocation details for a given IP address."""
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(f"http://ip-api.com/json/{ip}")
-            data = response.json()
+    target_ip = ip.strip()
 
-            if data.get("status") == "success":
+    # Resolve domain names to IP addresses if a hostname is provided
+    try:
+        target_ip = socket.gethostbyname(target_ip)
+    except Exception:
+        pass
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        # Primary lookup: ip-api.com
+        try:
+            res1 = await client.get(f"http://ip-api.com/json/{target_ip}")
+            data1 = res1.json()
+            if data1.get("status") == "success":
                 return {
-                    "ip": ip,
-                    "latitude": data.get("lat"),
-                    "longitude": data.get("lon"),
-                    "city": data.get("city"),
-                    "country": data.get("country"),
-                    "org": data.get("org")
+                    "ip": target_ip,
+                    "latitude": data1.get("lat"),
+                    "longitude": data1.get("lon"),
+                    "city": data1.get("city"),
+                    "country": data1.get("country"),
+                    "org": data1.get("org")
                 }
-            return {"ip": ip, "error": "Unable to locate IP"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"IP lookup failed: {str(e)}")
+        except Exception:
+            pass
+
+        # Secondary lookup: ipinfo.io fallback
+        try:
+            res2 = await client.get(f"https://ipinfo.io/{target_ip}/json")
+            data2 = res2.json()
+            if "loc" in data2:
+                lat, lon = map(float, data2["loc"].split(","))
+                return {
+                    "ip": target_ip,
+                    "latitude": lat,
+                    "longitude": lon,
+                    "city": data2.get("city"),
+                    "country": data2.get("country"),
+                    "org": data2.get("org")
+                }
+        except Exception:
+            pass
+
+    return {"ip": target_ip, "error": "Unable to locate target IP or domain"}
