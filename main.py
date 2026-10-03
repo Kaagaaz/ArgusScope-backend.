@@ -22,10 +22,8 @@ def read_root():
 
 @app.get("/api/v1/locate-bssid")
 async def locate_bssid(netid: str):
-    # WiGLE v2 Search endpoint
-    url = "https://api.wigle.net/api/v2/network/search"
-    
-    # WiGLE expects exact netid parameter matching the BSSID/MAC address
+    # Use the official network detail endpoint for precise single-BSSID lookups
+    url = f"https://api.wigle.net/api/v2/network/detail"
     params = {"netid": netid.strip()}
     headers = {"Accept": "application/json"}
     
@@ -40,8 +38,8 @@ async def locate_bssid(netid: str):
             
         data = response.json()
         
-        if data.get("success") and data.get("results") and len(data["results"]) > 0:
-            result = data["results"][0]
+        if data.get("success") and data.get("result"):
+            result = data["result"]
             return {
                 "bssid": result.get("netid"),
                 "ssid": result.get("ssid", "Unknown SSID"),
