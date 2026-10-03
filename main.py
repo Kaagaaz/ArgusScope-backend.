@@ -5,7 +5,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="ArgusScope Backend")
 
-# Enable CORS to allow requests from your frontend (GitHub Pages or local)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,7 +13,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load WiGLE API credentials from Render environment variables
 WIGLE_USER = os.getenv("WIGLE_API_USER", "")
 WIGLE_TOKEN = os.getenv("WIGLE_API_KEY", "")
 
@@ -24,23 +22,24 @@ def read_root():
 
 @app.get("/api/v1/locate-bssid")
 async def locate_bssid(netid: str):
-    url = f"https://api.wigle.net/api/v2/network/search?netid={netid}"
+    # WiGLE v2 Search endpoint
+    url = "https://api.wigle.net/api/v2/network/search"
+    
+    # WiGLE expects exact netid parameter matching the BSSID/MAC address
+    params = {"netid": netid.strip()}
     headers = {"Accept": "application/json"}
     
     try:
-        # Authenticate using HTTP Basic Auth (API Name as username, API Token as password)
-        response = requests.get(url, headers=headers, auth=(WIGLE_USER, WIGLE_TOKEN))
+        response = requests.get(url, params=params, headers=headers, auth=(WIGLE_USER, WIGLE_TOKEN))
         
-        # DEBUG PRINT: This will show up directly in your Render Live Logs
-        print("WiGLE Response Code:", response.status_code)
-        print("WiGLE Response Text:", response.text)
+        print("WiGLE Code:", response.status_code)
+        print("WiGLE Body:", response.text)
         
         if response.status_code != 200:
-            return {"error": f"WiGLE API failed with status {response.status_code}"}
+            return {"error": f"WiGLE rejected request (Status {response.status_code})"}
             
         data = response.json()
         
-        # Check if WiGLE returned valid results
         if data.get("success") and data.get("results") and len(data["results"]) > 0:
             result = data["results"][0]
             return {
@@ -55,7 +54,7 @@ async def locate_bssid(netid: str):
             return {"error": "BSSID not found in WiGLE database."}
             
     except Exception as e:
-        print("Exception during WiGLE request:", str(e))
+        print("Error:", str(e))
         return {"error": "Internal server error connecting to WiGLE."}
 
 @app.get("/api/v1/locate-ip")
