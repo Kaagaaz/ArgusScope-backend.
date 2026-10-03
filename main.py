@@ -1,8 +1,8 @@
 import os
 import time
+import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import requests
 
 app = FastAPI(title="ArgusScope Backend")
 
@@ -17,36 +17,44 @@ app.add_middleware(
 WIGLE_USER = os.getenv("WIGLE_API_USER", "")
 WIGLE_TOKEN = os.getenv("WIGLE_API_KEY", "")
 
-# In-memory cache dictionary: { "target_key": {"timestamp": float, "data": dict} }
+# In-memory TTL cache to eliminate redundant calls and block 429 loops
 SEARCH_CACHE = {}
-CACHE_TTL_SECONDS = 300  # Cache results for 5 minutes to prevent 429 rate limits
+CACHE_TTL_SECONDS = 600  # 10 minutes cache duration
 
 def sanitize_mac(mac: str) -> str:
-    """Cleans and normalizes user-submitted BSSIDs/MAC addresses."""
-    cleaned = mac.strip().lower().replace("-", ":")
-    return cleaned
+    """Normalizes MAC addresses into standard colon-separated lowercase format."""
+    return mac.strip().lower().replace("-", ":")
 
 @app.get("/")
 def read_root():
-    return {"status": "ArgusScope Recon Engine Online - Advanced Telemetry Active"}
+    return {"status": "ArgusScope High-Precision Intelligence Engine Online"}
 
 @app.get("/api/v1/locate-bssid")
 async def locate_bssid(netid: str):
     target_mac = sanitize_mac(netid)
     
-    # 1. Check In-Memory Cache first (Mitigates rate limits)
+    # 1. Check Cache Layer
     now = time.time()
     if target_mac in SEARCH_CACHE:
-        cached_entry = SEARCH_CACHE[target_mac]
-        if now - cached_entry["timestamp"] < CACHE_TTL_SECONDS:
-            response_data = cached_entry["data"].copy()
-            response_data["confidence"] = "High (Cached Memory Match)"
-            return response_data
+        cached = SEARCH_CACHE[target_mac]
+        if now - cached["timestamp"] < CACHE_TTL_SECONDS:
+            res_data = cached["data"].copy()
+            res_data["source"] = "Cache (Optimized)"
+            return res_data
         else:
             del SEARCH_CACHE[target_mac]
 
     url = "https://api.wigle.net/api/v2/network/search"
-    params = {"netid": target_mac, "resultsPerPage": 1}
+    
+    # 2. Provide fallback global search boundaries so WiGLE accepts the query parameter filter
+    params = {
+        "netid": target_mac,
+        "resultsPerPage": 1,
+        "latrange1": -90.0,
+        "latrange2": 90.0,
+        "longrange1": -180.0,
+        "longrange2": 180.0
+    }
     headers = {"Accept": "application/json"}
     
     try:
@@ -56,48 +64,47 @@ async def locate_bssid(netid: str):
         response = requests.get(url, params=params, headers=headers, auth=(WIGLE_USER, WIGLE_TOKEN))
         
         if response.status_code == 429:
-            return {"error": "WiGLE rate limit hit (429). Serving from cool-down protection."}
+            return {"error": "WiGLE rate limit exceeded (429). Please wait a moment."}
             
         if response.status_code != 200:
-            return {"error": f"WiGLE rejected request (Status {response.status_code})"}
+            return {"error": f"WiGLE API error: Status code {response.status_code}"}
             
         data = response.json()
         
         if data.get("success") and data.get("results") and len(data["results"]) > 0:
             result = data["results"][0]
             
-            # 2. Dynamic Accuracy & Confidence Modeling
-            # Evaluates observation count to gauge confidence and adjust radius dynamically
+            # 3. Dynamic Precision & Confidence Evaluation
             obs_count = result.get("count", 1)
-            if obs_count > 50:
-                accuracy_radius = 10
-                confidence_level = "Very High (Dense Crowdsourced Triangulation)"
-            elif obs_count > 10:
-                accuracy_radius = 25
-                confidence_level = "High (Verified WiGLE Database Match)"
+            if obs_count > 40:
+                radius = 12
+                confidence = "High (Dense Telemetry Cluster)"
+            elif obs_count > 5:
+                radius = 25
+                confidence = "Medium-High (Standard Triangulation)"
             else:
-                accuracy_radius = 50
-                confidence_level = "Medium (Sparse Observation Match)"
+                radius = 50
+                confidence = "Low-Medium (Sparse Observation)"
 
             payload = {
                 "bssid": result.get("netid"),
-                "ssid": result.get("ssid", "Unknown SSID"),
+                "ssid": result.get("ssid", "Unknown Network"),
                 "latitude": result.get("trilat"),
                 "longitude": result.get("trilong"),
-                "accuracy_radius_m": accuracy_radius,
-                "confidence": confidence_level,
-                "observations": obs_count
+                "accuracy_radius_m": radius,
+                "confidence": confidence,
+                "observations": obs_count,
+                "source": "WiGLE Live Database"
             }
             
-            # Save into cache
+            # Store payload in cache
             SEARCH_CACHE[target_mac] = {"timestamp": now, "data": payload}
             return payload
         else:
-            return {"error": "BSSID not found in WiGLE database."}
+            return {"error": "Target BSSID not cataloged in WiGLE database."}
             
     except Exception as e:
-        print("Error:", str(e))
-        return {"error": "Internal server error connecting to WiGLE."}
+        return {"error": f"Internal routing failure: {str(e)}"}
 
 @app.get("/api/v1/locate-ip")
 async def locate_ip(ip: str):
@@ -111,8 +118,9 @@ async def locate_ip(ip: str):
                 "longitude": ip_data.get("lon"),
                 "city": ip_data.get("city"),
                 "country": ip_data.get("country"),
-                "confidence": "Medium (Regional IP Geolocation)",
-                "accuracy_radius_m": 5000
+                "confidence": "Medium (Regional ISP Geolocation)",
+                "accuracy_radius_m": 5000,
+                "source": "IP-API Geo Lookup"
             }
         else:
             return {"error": "IP target resolution failed."}
