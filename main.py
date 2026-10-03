@@ -1,11 +1,11 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import httpx
-import socket
 import os
+import requests
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="ArgusScope WiGLE Recon Engine")
+app = FastAPI(title="ArgusScope Backend")
 
+# Enable CORS to allow requests from your frontend (GitHub Pages or local)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,68 +14,66 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-WIGLE_API_NAME = os.getenv("WIGLE_API_NAME", "AID6e5791df2387dceeda23c5bcfaf11417")
-WIGLE_API_SECRET = os.getenv("WIGLE_API_SECRET", "461432f3d06b1726fdfb6298b0a0c60a")
+# Load WiGLE API credentials from Render environment variables
+WIGLE_USER = os.getenv("WIGLE_API_USER", "")
+WIGLE_TOKEN = os.getenv("WIGLE_API_KEY", "")
 
 @app.get("/")
 def read_root():
-    return {"status": "ArgusScope WiGLE Engine Online"}
+    return {"status": "ArgusScope Recon Engine Online"}
 
 @app.get("/api/v1/locate-bssid")
 async def locate_bssid(netid: str):
-    """
-    Looks up Wi-Fi BSSID (MAC address) via WiGLE.
-    Accepts formats: 00:11:22:33:44:55 or 00-11-22-33-44-55
-    """
-    clean_bssid = netid.strip().upper()
-    url = f"https://api.wigle.net/api/v2/network/search?netid={clean_bssid}"
+    url = f"https://api.wigle.net/api/v2/network/search?netid={netid}"
+    headers = {"Accept": "application/json"}
     
-    auth = (WIGLE_API_NAME, WIGLE_API_SECRET)
-    
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        try:
-            res = await client.get(url, auth=auth)
-            data = res.json()
+    try:
+        # Authenticate using HTTP Basic Auth (API Name as username, API Token as password)
+        response = requests.get(url, headers=headers, auth=(WIGLE_USER, WIGLE_TOKEN))
+        
+        # DEBUG PRINT: This will show up directly in your Render Live Logs
+        print("WiGLE Response Code:", response.status_code)
+        print("WiGLE Response Text:", response.text)
+        
+        if response.status_code != 200:
+            return {"error": f"WiGLE API failed with status {response.status_code}"}
             
-            if data.get("success") and data.get("resultCount", 0) > 0:
-                net_info = data["results"][0]
-                return {
-                    "source": "WiGLE Global Wi-Fi Registry",
-                    "bssid": clean_bssid,
-                    "ssid": net_info.get("ssid") or "Hidden / Unnamed Network",
-                    "latitude": round(float(net_info["trilat"]), 5),
-                    "longitude": round(float(net_info["trilong"]), 5),
-                    "accuracy_radius_m": 25,
-                    "confidence": "HIGH (Physical Wi-Fi Triangulation)",
-                    "last_updated": net_info.get("lastupdt")
-                }
-            else:
-                return {"error": "BSSID not found in WiGLE database"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        data = response.json()
+        
+        # Check if WiGLE returned valid results
+        if data.get("success") and data.get("results") and len(data["results"]) > 0:
+            result = data["results"][0]
+            return {
+                "bssid": result.get("netid"),
+                "ssid": result.get("ssid", "Unknown SSID"),
+                "latitude": result.get("trilat"),
+                "longitude": result.get("trilong"),
+                "accuracy_radius_m": 25,
+                "confidence": "High (WiGLE Database Match)"
+            }
+        else:
+            return {"error": "BSSID not found in WiGLE database."}
+            
+    except Exception as e:
+        print("Exception during WiGLE request:", str(e))
+        return {"error": "Internal server error connecting to WiGLE."}
 
 @app.get("/api/v1/locate-ip")
 async def locate_ip(ip: str):
-    target_ip = ip.strip()
     try:
-        target_ip = socket.gethostbyname(target_ip)
-    except Exception: pass
-
-    async with httpx.AsyncClient(timeout=4.0) as client:
-        try:
-            r = await client.get(f"http://ip-api.com/json/{target_ip}?fields=status,country,city,lat,lon,org")
-            d = r.json()
-            if d.get("status") == "success":
-                return {
-                    "ip": target_ip,
-                    "latitude": float(d["lat"]),
-                    "longitude": float(d["lon"]),
-                    "accuracy_radius_m": 8000,
-                    "city": d.get("city", "Unknown"),
-                    "country": d.get("country", "Unknown"),
-                    "org": d.get("org", "Unknown ISP"),
-                    "confidence": "REGIONAL (ISP Gateway)"
-                }
-        except Exception: pass
-            
-    return {"error": "Target resolution failed"}
+        res = requests.get(f"http://ip-api.com/json/{ip}")
+        ip_data = res.json()
+        if ip_data.get("status") == "success":
+            return {
+                "ip": ip_data.get("query"),
+                "latitude": ip_data.get("lat"),
+                "longitude": ip_data.get("lon"),
+                "city": ip_data.get("city"),
+                "country": ip_data.get("country"),
+                "confidence": "Medium (IP Geolocation)",
+                "accuracy_radius_m": 5000
+            }
+        else:
+            return {"error": "IP target resolution failed."}
+    except Exception as e:
+        return {"error": str(e)}
